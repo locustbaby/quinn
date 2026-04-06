@@ -14,7 +14,7 @@ use pin_project_lite::pin_project;
 use rustc_hash::FxHashMap;
 use thiserror::Error;
 use tokio::sync::{Notify, futures::Notified, mpsc, oneshot};
-use tracing::{Instrument, Span, debug_span};
+use tracing::debug_span;
 
 use crate::{
     ConnectionEvent, Duration, Instant, VarInt,
@@ -60,14 +60,11 @@ impl Connecting {
         );
 
         let driver = ConnectionDriver(conn.clone());
-        runtime.spawn(Box::pin(
-            async {
-                if let Err(e) = driver.await {
-                    tracing::error!("I/O error: {e}");
-                }
+        runtime.spawn(Box::pin(async {
+            if let Err(e) = driver.await {
+                tracing::error!("I/O error: {e}");
             }
-            .instrument(Span::current()),
-        ));
+        }));
 
         Self {
             conn: Some(conn),
@@ -242,7 +239,11 @@ impl Future for ConnectionDriver {
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let conn = &mut *self.0.state.lock("poll");
 
-        let span = debug_span!("drive", id = conn.handle.0);
+        let span = if tracing::enabled!(tracing::Level::DEBUG) {
+            debug_span!("drive", id = conn.handle.0)
+        } else {
+            tracing::Span::none()
+        };
         let _guard = span.enter();
 
         if let Err(e) = conn.process_conn_events(&self.0.shared, cx) {

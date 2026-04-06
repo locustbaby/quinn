@@ -29,7 +29,7 @@ use rustc_hash::FxHashMap;
 #[cfg(all(not(wasm_browser), any(feature = "aws-lc-rs", feature = "ring"),))]
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio::sync::{Notify, futures::Notified, mpsc};
-use tracing::{Instrument, Span};
+use tracing;
 use udp::{BATCH_SIZE, RecvMeta};
 
 use crate::{
@@ -147,14 +147,11 @@ impl Endpoint {
             runtime.clone(),
         );
         let driver = EndpointDriver(rc.clone());
-        runtime.spawn(Box::pin(
-            async {
-                if let Err(e) = driver.await {
-                    tracing::error!("I/O error: {}", e);
-                }
+        runtime.spawn(Box::pin(async {
+            if let Err(e) = driver.await {
+                tracing::error!("I/O error: {}", e);
             }
-            .instrument(Span::current()),
-        ));
+        }));
         Ok(Self {
             inner: rc,
             default_client_config: None,
