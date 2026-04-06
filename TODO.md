@@ -150,6 +150,29 @@ runtime.spawn(Box::pin(fut));
 
 **结论**：这是真实存在且上游未修复的性能问题。
 
+### 为什么我们的 patch 第三条（`tracing::enabled!` guard）也没用
+
+我们在 `ConnectionDriver::poll` 里加了：
+
+```rust
+let span = if tracing::enabled!(tracing::Level::DEBUG) {
+    debug_span!("drive", id = conn.handle.0)
+} else {
+    tracing::Span::none()
+};
+```
+
+`tracing::enabled!(DEBUG)` 展开后是：
+
+```rust
+if DEBUG <= STATIC_MAX_LEVEL   // 编译期常量判断
+    && DEBUG <= LevelFilter::current()  // 运行时判断
+```
+
+`STATIC_MAX_LEVEL` 由 `release_max_level_warn` 控制，**但它也是 per-crate 编译的**。quinn 的 tracing 依赖没有 `release_max_level_warn`，所以 quinn 编译时 `STATIC_MAX_LEVEL = TRACE`（默认）。`DEBUG(4) <= TRACE(5)` 为 `true`，编译期不消除，继续走运行时检查。运行时 subscriber 虽然返回 false（不 enable DEBUG），但这个判断本身仍有开销，只是省了创建 span 对象。**guard 没有从根本上解决问题。**
+
+**真正有效的只有第一二条 patch（删掉 `.instrument()`）**，因为那是直接消除了 `Instrumented` 包装类型，跟 tracing level 完全无关。
+
 ### 为什么下游加 `release_max_level_warn` 不行
 
 `release_max_level_warn` 是 **per-crate 编译**的静态常量，只裁剪声明该 feature 的 crate 内部的 tracing 宏。在 tunnel-lib/client/server 的 Cargo.toml 里加，只影响这些 crate 自己的代码，**完全不影响 quinn 内部的 `debug_span!` 和 `Span::current()`**。必须在 quinn 自己的 workspace Cargo.toml 里加才有效，而这只能走上游 PR。
