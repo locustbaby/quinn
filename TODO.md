@@ -139,9 +139,24 @@ runtime.spawn(Box::pin(fut));
 
 **方案 A**（改 workspace `Cargo.toml` 加 `release_max_level_warn`）最简单，一行改动，向后兼容，对所有用户透明。可作为 upstream PR 的核心改动，配合方案 C 的条件 instrument 作为补充。
 
+### 上游现状分析（2026-04-06）
+
+通过 `git log origin/main` 确认：
+
+- `origin/main` 和 `quinn-0.11.9` **均保留** `.instrument(Span::current())`，没有任何修复
+- `377af288`（rename log → tracing-log）只是 feature 改名，与 span 开销无关
+- `ecae4ad1`（track callers in runtime spawn）只加了 `#[track_caller]`，无关
+- workspace `Cargo.toml` 的 tracing 依赖至今仍是 `features = ["std"]`，无 `release_max_level_warn`
+
+**结论**：这是真实存在且上游未修复的性能问题。
+
+### 为什么下游加 `release_max_level_warn` 不行
+
+`release_max_level_warn` 是 **per-crate 编译**的静态常量，只裁剪声明该 feature 的 crate 内部的 tracing 宏。在 tunnel-lib/client/server 的 Cargo.toml 里加，只影响这些 crate 自己的代码，**完全不影响 quinn 内部的 `debug_span!` 和 `Span::current()`**。必须在 quinn 自己的 workspace Cargo.toml 里加才有效，而这只能走上游 PR。
+
 ### 待办
 
-- [ ] 查看 quinn-rs/quinn 是否有相关 issue（搜索：`Instrumented overhead`、`debug_span poll`、`tracing release_max_level`）
-- [ ] 无则提 issue，附 flamegraph 链接作为证据
+- [ ] 搜索 quinn-rs/quinn issues（关键词：`Instrumented overhead`、`debug_span poll`、`tracing release_max_level`）
+- [ ] 无相关 issue 则提新 issue，附上 flamegraph 链接作为证据
 - [ ] PR 方向：workspace `Cargo.toml` 加 `release_max_level_warn` + 方案 C 的条件 instrument
-- [ ] 上游合并后移除 `[patch.crates-io]` 并升级 quinn 版本
+- [ ] 上游合并后移除 tunnel 的 `[patch.crates-io]` 并升级 quinn 版本
