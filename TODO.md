@@ -83,14 +83,16 @@ let _guard = span.enter();
 
 ### 更优雅的修复方案
 
-**方案 A（最小改动，推荐给上游）**：workspace `Cargo.toml` 加 `release_max_level_warn`
+**方案 A（最小改动，推荐给上游）**：quinn 自己的 workspace `Cargo.toml` 加 `release_max_level_warn`
 
 ```toml
-# Cargo.toml workspace dependencies
+# quinn/Cargo.toml workspace dependencies
 tracing = { version = "0.1.10", default-features = false, features = ["std", "release_max_level_warn"] }
 ```
 
 效果：release build 里所有 `debug_span!`/`trace_span!` 被编译期静态消除为 `Span::none()`，`Instrumented::poll` 的 enter/exit 变成真正零成本。开发/debug build 保留完整 tracing。**不需要改任何 Rust 代码。**
+
+> ⚠️ **重要**：`release_max_level_warn` 是 **per-crate** 编译的，只影响声明该 feature 的那个 crate 内部的 tracing 宏。在下游（如 tunnel-lib）加无效，**必须在 quinn 自己的 Cargo.toml 里加才能消除 quinn 内部的 debug_span! 开销**。这也是为什么这个修复只能作为上游 PR，下游用户无法自行解决。
 
 **方案 B（feature gate，更灵活）**：在 quinn 的 `[features]` 里加一个 `tracing` feature
 
